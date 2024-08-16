@@ -1,0 +1,130 @@
+#below code was the main.py file before refractoring it to project structure
+
+import uuid
+import bcrypt
+from fastapi import FastAPI, HTTPException, Request 
+from pydantic import BaseModel
+from sqlalchemy import TEXT, VARCHAR, Column, LargeBinary, create_engine # this engine is required to connect our framework to postgreysql database
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
+
+
+app = FastAPI()
+
+#now we can use this app variable to create api route
+
+
+# @app.get('/')
+# def test():
+#     return "hello world" # this will show Hello world on localhost page
+
+# @app.get('/')
+# def test():
+#     print("Hello world")  # this will show null on localhost page, because we aint returning nothin
+
+# @app.post('/')
+# def test(q:str):
+#     return q
+
+# @app.post('/')
+# def test(request:Request):
+#     print(request.body)
+#     # this print line will give
+#     #<bound method Request.body of <starlette.requests.Request object at 0x000001C7B76A7890>>
+#     return "hello world"
+
+#@app.post('/')
+#async def test(request:Request):
+ #   print( await request.body()) #here body will returna  Co-routine of bytes
+  #  # b'' will be the courotine of byte becuase we dont have anything in the body of the Post request we are making
+   ##but in case we send something in the body of the post request if will be printed
+    #return "hello world"
+
+
+# @app.post('/')
+# async def test(request:Request):
+#     print( (await request.body()).decode()) #this is one way of accessing request body but there is
+#     #one more alegant way, using basemodel from pydantics
+#     return "hello world"
+"""
+#code below is a better way to access request body 
+class Test(BaseModel):
+    name: str
+    age: int
+
+@app.post('/')
+def test(t: Test):
+    print(t)
+    return "hello"
+#code above is the better way of accessing request body
+"""
+
+# now we create new named Route
+
+""" Your original password is Misha@123.
+Encode the @ as %40 """
+
+DATABASE_URL = 'postgresql://postgres:Misha%40123@localhost:5432/musicapp'
+
+engine = create_engine(DATABASE_URL) # here create engine returns Engine, this Engine is the starting point for sqlalchemy Application that need to connect to the database, this acts as a central source of connections to our database
+#now the next thing we need to do is create a session
+
+sessionLocal = sessionmaker(autocommit = False, autoflush = False, bind = engine ) 
+
+# sessionmaker this is a fuction that will create new session object when its called and this sessionlocal is the interface with which you interact the database in a transactional manner
+#autocomit = false-> this setting means that the sqlAlchemy will not commit any transaction automatically, you will need to use transacntion.commit to commit transanction to te Database
+#if autocomit = true-> it will commit each query/operation done to the DB will be imediately commited to the DB, which means you could not perform multiple query/operation in a single transanction
+#autoFlush = False -> this autoflush determine whether the session should automatically flush pending changes to the database before each query
+# when autoFlush = False , then sqlAlchemy wait to send the changes to the database untill we explicitly call Session.flush or Session.commit
+#this important for performance as it reduces the round of trips to the database also give more control over when changes send to the databse
+#which can be important for transanction integrity and consistancy
+
+# Transanction means -> a request send to the database or an exchange that was done to the databse.
+
+db = sessionLocal() # here we get access to the database, db variable has the access to the database
+
+class UserCreate(BaseModel):
+    name: str
+    email: str
+    password: str
+
+Base = declarative_base()
+# now we will extend our User class with Base, because we need to extend User class with some thing from sqlalchemy so that
+# our sqlalchemy get to know that User is a tabe that the programmer would like to create if it already dosent exist
+
+class User(Base):
+    __tablename__ = "users"
+
+    #if User is the table than all of its variables are Columns , and here this Column class comes from sqlalchemy
+    id = Column(TEXT, primary_key = True) #Variable type inside Column(TEXT) will always be imported from sqlalchemy
+    name = Column(VARCHAR(100))
+    email = Column(VARCHAR(100))
+    password = Column(LargeBinary)
+
+Base.metadata.create_all(engine)  #now the next thing we need to do is tell sqlalchemy to find all the classes that extend BASE so that it can create table
+#based on the information that is present in the class othetrwise it wouldnt know what classes to take and create tables off
+
+
+
+@app.post('/signup')
+def signup_user(user: UserCreate): 
+    #extract the data thats coming from requset
+    print(user.name)
+    print(user.email)
+    print(user.password)
+
+    #check if the user already exists in the db
+    user_db = db.query(User).filter(User.email == user.email).first() 
+    # if not user_db -> it evaluates to True if userdb is falsy mean is its either null,false,0,0.0,'',[],{},set()
+    if user_db: 
+        # return "User with this email already exists!"
+        raise HTTPException(400, "User with this email already exists!") #400 status is for bad request
+    #if user isnt in the db then add the user to the db
+    hash_pass = bcrypt.hashpw(user.password.encode(),bcrypt.gensalt())
+    user_db = User(id = str(uuid.uuid4()), name = user.name, email = user.email, password = hash_pass)
+    db.add(user_db)
+    db.commit()
+    db.refresh(user_db) #here it refreshes the attributes on a particular instance, it refresh all fields in the the user_db and store it with correct value
+    #otherwise if we dont use db.refresh then even though we have return user_db but it will return an empty dictionary {}
+    return user_db
+
